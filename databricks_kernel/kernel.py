@@ -4,12 +4,9 @@ import traceback
 from pathlib import Path
 
 import requests
+from requests import HTTPError
 from ipykernel.comm import Comm
-from ipykernel.kernelbase import Kernel
-from IPython.core.formatters import HTMLFormatter
-from ipywidgets import Text, Widget
 from metakernel import MetaKernel
-from tabulate import tabulate
 
 
 class InputText(object):
@@ -41,12 +38,12 @@ class DatabricksBaseKernel(MetaKernel):
         # config_changed comm
         self.comm = Comm(target_name="databricks.config")
         self.comm.on_msg(self._config_changed)
-        comm_id = self.comm_manager.register_comm(self.comm)
+        self.comm_manager.register_comm(self.comm)
 
         # actions comm
         self.comm_actions = Comm(target_name="databricks.actions")
         self.comm_actions.on_msg(self._handle_actions)
-        comm_id = self.comm_manager.register_comm(self.comm_actions)
+        self.comm_manager.register_comm(self.comm_actions)
 
     def _config_changed(self, msg):
         self.log.warn(msg)
@@ -56,7 +53,7 @@ class DatabricksBaseKernel(MetaKernel):
 
         try:
             data = msg["content"]["data"]
-        except:
+        except (KeyError, TypeError):
             return
 
         if type(data) == dict:
@@ -72,13 +69,13 @@ class DatabricksBaseKernel(MetaKernel):
 
     def _handle_actions(self, msg):
         self.log.warn(msg)
-        
+
         if not self.comm_actions:
             return
-        
+
         try:
             action = msg["content"]["data"]["action"]
-        except:
+        except (KeyError, TypeError):
             return
 
         if action == "start_cluster":
@@ -95,7 +92,7 @@ class DatabricksBaseKernel(MetaKernel):
             {
                 "id": x["cluster_id"],
                 "name": x["cluster_name"],
-                "state": x["state"].lower()
+                "state": x["state"].lower(),
             }
             for x in results["clusters"]
         ]
@@ -132,22 +129,22 @@ class DatabricksBaseKernel(MetaKernel):
             )
 
             r.raise_for_status()
-            body = r.json()
 
             self._context_id = r.json()["id"]
 
         return self._context_id
 
     def _start_cluster(self, cluster_id):
-        state = prev_state = [x["state"] for x in self.cluster_list if x["id"] == cluster_id][0]
+        state = prev_state = self._get_cluster_state(cluster_id)
 
         self.http_session.post(
-            f"{self.databricks_url}/api/2.0/clusters/start", json={"cluster_id": cluster_id}
+            f"{self.databricks_url}/api/2.0/clusters/start",
+            json={"cluster_id": cluster_id},
         )
 
-        while state != "running":            
+        while state != "running":
             time.sleep(10)
-            state = [x["state"] for x in self.cluster_list if x["id"] == cluster_id][0]
+            state = self._get_cluster_state(cluster_id)
             if prev_state != state:
                 self.comm.send({"config": self._config, "clusters": self.cluster_list})
 
@@ -155,10 +152,26 @@ class DatabricksBaseKernel(MetaKernel):
 
     def _check_status(self, command_id):
         r = self.http_session.get(
-            f"{self.databricks_url}/api/1.2/commands/status?clusterId={self.cluster_id}&contextId={self.context_id}&commandId={command_id}"
+            f"{self.databricks_url}/api/1.2/commands/status?clusterId={self.cluster_id}&contextId={self.context_id}&commandId={command_id}"  # noqa
         )
         r.raise_for_status()
         return r.json()
+
+    def _get_cluster_state(self, cluster_id=None):
+        cluster_id = cluster_id or self.cluster_id
+        return [x["state"] for x in self.cluster_list if x["id"] == cluster_id][0]
+
+    def _is_online_cluster(self, cluster_id=None):
+        cluster_id = cluster_id or self.cluster_id
+        state = self._get_cluster_state(cluster_id)
+        return state in ["running", "resizing"]
+
+    def _destroy_context(self):
+        r = self.http_session.post(
+            f"{self.databricks_url}/api/1.2/contexts/destroy",
+            json={"clusterId": self.cluster_id, "contextId": self.context_id},
+        )
+        r.raise_for_status()
 
     def run_command(self, code):
         r = self.http_session.post(
@@ -184,34 +197,38 @@ class DatabricksBaseKernel(MetaKernel):
         return body
 
     def do_execute_direct(self, code):
-        cluster_is_started = self.cluster_id in [x["id"] for x in self.cluster_list if x["state"] == "running"]
-
-        if not cluster_is_started:
+        if not self._is_online_cluster():
             self.Error("Cluster is offline.")
             self.Print()
             return
 
         try:
             response = self.run_command(code)
+        except HTTPError as err:
+            self.Error(err.response.text)
+            self.Error("".join(traceback.format_tb(err.__traceback__)))
+            self.Print()
+            return
         except Exception as err:
             self.Error(str(err))
             self.Error("".join(traceback.format_tb(err.__traceback__)))
             self.Print()
             return
 
-        if not "results" in response:
+        if "results" not in response:
             self.Error(json.dumps(response))
             self.Print()
 
         results = response["results"]
 
         if results["resultType"] == "error":
-            self.Error(response["cause"])
+            self.Error(results["cause"])
         elif results["resultType"] == "text":
             self.Print(results["data"])
         elif results["resultType"] == "table":
             self.Error(
-                "Displaying tables is not supported, please use the .show() function instead."
+                "Displaying tables is not supported, please use the .show() function "
+                "instead."
             )
             self.Print()
         else:
@@ -231,8 +248,13 @@ class DatabricksBaseKernel(MetaKernel):
             ]
             return max(status)
         else:
-            if not suffix == lang_ext:
-                raise TypeError(f"Either specify another notebook or {lang_ext} file.")
+            if not path.suffix == self.lang_ext:
+                raise TypeError(
+                    f"Either specify another notebook or {self.lang_ext} file.")
             with filename.open() as f:
                 code = "".join(f.readlines())
             return self.do_execute_direct(code)
+
+    def do_shutdown(self, restart):
+
+        super().do_shutdown()
