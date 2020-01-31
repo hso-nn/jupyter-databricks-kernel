@@ -29,6 +29,7 @@ class DatabricksBaseKernel(MetaKernel):
     _context_id = None
     _config = {}
     comm = None
+    comm_actions = None
     _config_path = Path.home() / ".jupyter" / "databricks.json"
 
     def __init__(self, *args, **kwargs):
@@ -41,6 +42,11 @@ class DatabricksBaseKernel(MetaKernel):
         self.comm = Comm(target_name="databricks.config")
         self.comm.on_msg(self._config_changed)
         comm_id = self.comm_manager.register_comm(self.comm)
+
+        # actions comm
+        self.comm_actions = Comm(target_name="databricks.actions")
+        self.comm_actions.on_msg(self._handle_actions)
+        comm_id = self.comm_manager.register_comm(self.comm_actions)
 
     def _config_changed(self, msg):
         self.log.warn(msg)
@@ -64,6 +70,21 @@ class DatabricksBaseKernel(MetaKernel):
         else:
             self.comm.send({"config": {}})
 
+    def _handle_actions(self, msg):
+        self.log.warn(msg)
+        
+        if not self.comm_actions:
+            return
+        
+        try:
+            action = msg["content"]["data"]["action"]
+        except:
+            return
+
+        if action == "start_cluster":
+            cluster_id = msg["content"]["data"]["data"]["cluster_id"]
+            self._start_cluster(cluster_id)
+
     @property
     def cluster_list(self):
         resp = self.http_session.get(f"{self.databricks_url}/api/2.0/clusters/list")
@@ -73,7 +94,8 @@ class DatabricksBaseKernel(MetaKernel):
         clusters = [
             {
                 "id": x["cluster_id"],
-                "name": "{} ({})".format(x["cluster_name"], x["state"].lower()),
+                "name": x["cluster_name"],
+                "state": x["state"].lower()
             }
             for x in results["clusters"]
         ]
@@ -108,8 +130,6 @@ class DatabricksBaseKernel(MetaKernel):
                 f"{self.databricks_url}/api/1.2/contexts/create",
                 json={"language": self.language, "clusterId": self.cluster_id},
             )
-            # if r.status_code == 500 and r.json()['error'].startswith("ClusterNotReadyException"):
-            #     self._start_cluster()
 
             r.raise_for_status()
             body = r.json()
@@ -118,10 +138,20 @@ class DatabricksBaseKernel(MetaKernel):
 
         return self._context_id
 
-    # def _start_cluster(self):
-    #     self.http_session.post(
-    #         f"{self.databricks_url}/api/2.0/clusters/start", json={"cluster_id", self.cluster_id}
-    #     )
+    def _start_cluster(self, cluster_id):
+        state = prev_state = [x["state"] for x in self.cluster_list if x["id"] == cluster_id][0]
+
+        self.http_session.post(
+            f"{self.databricks_url}/api/2.0/clusters/start", json={"cluster_id": cluster_id}
+        )
+
+        while state != "running":            
+            time.sleep(10)
+            state = [x["state"] for x in self.cluster_list if x["id"] == cluster_id][0]
+            if prev_state != state:
+                self.comm.send({"config": self._config, "clusters": self.cluster_list})
+
+            prev_state = state
 
     def _check_status(self, command_id):
         r = self.http_session.get(
@@ -154,6 +184,13 @@ class DatabricksBaseKernel(MetaKernel):
         return body
 
     def do_execute_direct(self, code):
+        cluster_is_started = self.cluster_id in [x["id"] for x in self.cluster_list if x["state"] == "running"]
+
+        if not cluster_is_started:
+            self.Error("Cluster is offline.")
+            self.Print()
+            return
+
         try:
             response = self.run_command(code)
         except Exception as err:
