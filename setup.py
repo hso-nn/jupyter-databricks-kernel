@@ -1,17 +1,17 @@
 from distutils.core import setup
 
-with open('README.rst') as f:
+with open('README.md') as f:
     readme = f.read()
 
 setup(
-    name='databricks_kernel',
+    name='databricks_kernel2',
     version='1.1',
-    packages=['databricks_kernel'],
-    description='Simple example kernel for Jupyter',
+    packages=['databricks_kernel2'],
+    description='Databricks kernel for jupyter',
     long_description=readme,
-    author='Jupyter Development Team',
-    author_email='jupyter@googlegroups.com',
-    url='https://github.com/jupyter/databricks_kernel',
+    author='Mark Baas',
+    author_email='mbaas@hso.com',
+    url='https://github.com/hso-nn/databricks_kernel2',
     install_requires=[
         'jupyter_client', 'IPython', 'ipykernel'
     ],

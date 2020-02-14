@@ -1,9 +1,8 @@
-from ipykernel.kernelapp import IPKernelApp
+from .databricks_mixin import DatabricksMixin
+from .kernel_base import KernelBase
 
-from .kernel import DatabricksBaseKernel
 
-
-class DatabricksPythonKernel(DatabricksBaseKernel):
+class DatabricksPythonKernel(DatabricksMixin, KernelBase):
     language = "python"
     language_version = "0.1"
     language_info = {
@@ -11,7 +10,3 @@ class DatabricksPythonKernel(DatabricksBaseKernel):
         "mimetype": "text/python",
         "file_extension": ".py",
     }
-
-
-if __name__ == "__main__":
-    IPKernelApp.launch_instance(kernel_class=DatabricksPythonKernel)

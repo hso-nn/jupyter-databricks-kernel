@@ -1,9 +1,8 @@
-from ipykernel.kernelapp import IPKernelApp
+from .databricks_mixin import DatabricksMixin
+from .kernel_base import KernelBase
 
-from .kernel import DatabricksBaseKernel
 
-
-class DatabricksScalaKernel(DatabricksBaseKernel):
+class DatabricksScalaKernel(DatabricksMixin, KernelBase):
     language = "scala"
     language_version = "0.1"
     language_info = {
@@ -11,7 +10,3 @@ class DatabricksScalaKernel(DatabricksBaseKernel):
         "mimetype": "text/scala",
         "file_extension": ".scala",
     }
-
-
-if __name__ == "__main__":
-    IPKernelApp.launch_instance(kernel_class=DatabricksScalaKernel)

@@ -9,29 +9,35 @@ from IPython.utils.tempdir import TemporaryDirectory
 from jupyter_client.kernelspec import KernelSpecManager
 
 kernel_json = {
-    "python": {
-        "argv": [
-            sys.executable,
-            "-m",
-            "databricks_kernel.scalakernel",
-            "-f",
-            "{connection_file}",
-        ],
-        "display_name": "Databricks (Scala)",
-        "name": "databricks_scala",
-        "language": "scala",
-    },
     "scala": {
         "argv": [
             sys.executable,
             "-m",
-            "databricks_kernel.pykernel",
-            "-f",
+            "databricks_kernel",
+            "--config",
             "{connection_file}",
+            "--language",
+            "scala",
+        ],
+        "display_name": "Databricks (Scala)",
+        "name": "databricks_scala",
+        "language": "scala",
+        "interrupt_mode": "message",
+    },
+    "python": {
+        "argv": [
+            sys.executable,
+            "-m",
+            "databricks_kernel",
+            "--config",
+            "{connection_file}",
+            "--language",
+            "python",
         ],
         "display_name": "Databricks (Python)",
         "name": "databricks_python",
         "language": "python",
+        "interrupt_mode": "message",
     },
 }
 
@@ -47,8 +53,12 @@ def install_my_kernel_spec(user=True, prefix=None):
             dest = KernelSpecManager().install_kernel_spec(
                 td, f"databricks_{l}", user=user, prefix=prefix
             )
-            
-            shutil.copy(Path(__file__).parent / "resources" / f"databricks_{l}.png", Path(dest) / "logo-64x64.png")
+
+            shutil.copy(
+                Path(__file__).parent / "resources" / f"databricks_{l}.png",
+                Path(dest) / "logo-64x64.png",
+            )
+
 
 def _is_root():
     try:
