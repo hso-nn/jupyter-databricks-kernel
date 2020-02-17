@@ -188,6 +188,11 @@ class DatabricksMixin(object):
             ]
         }
 
+        # periodically send new config update
+        while True:
+            self.send_comm_message("databricks.config", await self._config_changed())
+            await asyncio.sleep(5)
+
     async def _run_command(self, code):
 
         if not await self._is_online_cluster():
