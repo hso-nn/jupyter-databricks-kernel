@@ -4,11 +4,16 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import traceback
 import uuid
 
+import ipywidgets.widgets as widgets
 import zmq
 from zmq.asyncio import Context
+
+from .comm import Comm
+from .exceptions import CommandCanceled, CommandError
 
 DELIM = b"<IDS|MSG>"
 
@@ -42,6 +47,7 @@ class KernelBase(object):
     language_version = None
     language_info = None
     comms = {}
+    widgets = {}
 
     def __init__(self, config):
         self.jupyter_config = config
@@ -66,6 +72,10 @@ class KernelBase(object):
             "interrupt_request": self.handle_interrupt_request,
             "shutdown_request": self.do_shutdown,
         }
+
+        widgets_comm = Comm("jupyter.widget", self.handle_widgets)
+
+        self.comms = {widgets_comm.uuid: widgets_comm}
 
         self.execution_count = 0
 
@@ -139,6 +149,7 @@ class KernelBase(object):
 
         while True:
             ids, header, content = await self._receive(sock)
+            logger.warn("iopub {} {} {}".format(ids, header, content))
 
     async def _init_sockets(self):
         await asyncio.gather(
@@ -167,7 +178,14 @@ class KernelBase(object):
         loop.run_until_complete(self._init_sockets())
 
     def send(
-        self, sock, msg_type, content={}, parent_header={}, ids=None, username="kernel"
+        self,
+        sock,
+        msg_type,
+        content={},
+        parent_header={},
+        ids=None,
+        username="kernel",
+        metadata={},
     ):
         header = {
             "date": datetime.datetime.now().isoformat(),
@@ -181,7 +199,7 @@ class KernelBase(object):
         msgs = [
             encode_message(header),
             encode_message(parent_header),
-            encode_message({}),
+            encode_message(metadata),
             encode_message(content),
         ]
         signature = sign(self.auth, msgs)
@@ -220,7 +238,7 @@ class KernelBase(object):
         if comm_id not in self.comms:
             return
 
-        r = await self.comms[comm_id].on_recv(content)
+        r = await self.comms[comm_id].on_recv(content, headers, ids)
         if r:
             self.send(
                 self.iopub, "comm_msg", {"comm_id": comm_id, "data": r}, headers, ids
@@ -241,32 +259,104 @@ class KernelBase(object):
         self.send(self.shell, "kernel_info_reply", response, headers, ids)
         self.publish_status("idle", headers)
 
+    async def handle_widgets(self, data, headers, ids):
+        logger.warn("widget!")
+        logger.warn(data)
+
+    async def send_widget(self, widget, headers, ids):
+
+        manager_state = widget.get_manager_state()
+        view_spec = widget.get_view_spec()
+
+        for comm_id, state in manager_state["state"].items():
+            self.send(
+                self.iopub,
+                "comm_open",
+                {
+                    "comm_id": comm_id,
+                    "target_name": "jupyter.widget",
+                    "data": {"state": state["state"]},
+                },
+                headers,
+                ids,
+                metadata={"version": "2.0.0"},
+            )
+
+        return view_spec
+
     async def handle_execute_request(self, content, headers, ids):
         self.execution_count += 1
         self.interrupt_execution = False
 
         try:
-            results = await self.execute_code(**content)
+            msg = await self.execute_code(**content)
+            status = "ok"
+
             self.send(
                 self.iopub,
                 "stream",
-                {"name": "stdout", "text": str(results)},
+                {"name": "stdout", "text": str(msg)},
                 headers,
                 ids,
             )
-        except Exception as e:
-            err = str(e)
-            # if getattr(e, "skip_traceback", False):
-            err = err + "\n" + "".join(traceback.format_tb(e.__traceback__))
+        except CommandCanceled:
+            status = "aborted"
+        except CommandError as e:
+            if e.summary:
+                self.send(
+                    self.iopub,
+                    "stream",
+                    {"name": "stderr", "text": str(e.summary)},
+                    headers,
+                    ids,
+                )
+            match_with_stacktrace = re.match(
+                r"(.+?Exception: .+?;)(.+)", e.traceback, re.DOTALL
+            )
+            if match_with_stacktrace:
+                title, stacktrace = match_with_stacktrace.groups()
+            else:
+                title = "More ..."
+                stacktrace = e.traceback
+            html = widgets.HTML(value=f"<pre>{stacktrace}</pre>")
+            accordion = widgets.Accordion(children=[html])
+            accordion.add_class("jp-RenderedText")
+            accordion.set_title(0, title)
+            view_spec = await self.send_widget(accordion, headers, ids)
 
             self.send(
-                self.iopub, "stream", {"name": "stderr", "text": err}, headers, ids,
+                self.iopub,
+                "display_data",
+                {
+                    "data": {
+                        "text/plain": str(accordion),
+                        "application/vnd.jupyter.widget-view+json": view_spec,
+                    },
+                    "metadata": {},
+                },
+                headers,
+                ids,
+            )
+            status = "error"
+        except Exception as e:
+            msg = str(e)
+            if getattr(e, "skip_traceback", False):
+                msg = msg + "\n" + "".join(traceback.format_tb(e.__traceback__))
+
+            status = "error"
+
+            self.send(
+                self.iopub,
+                "stream",
+                {"name": "stderr", "text": str(msg)},
+                headers,
+                ids,
             )
 
         self.send(
             self.shell,
             "execute_reply",
-            {"status": "ok", "execution_count": self.execution_count},
+            {"status": status, "execution_count": self.execution_count},
             headers,
             ids,
         )

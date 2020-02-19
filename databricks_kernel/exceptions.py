@@ -15,11 +15,12 @@ class IncompleteResults(Exception):
 class CommandError(Exception):
     skip_traceback = True
 
-    def __init__(self, msg):
-        self.msg = msg
+    def __init__(self, summary, traceback):
+        self.summary = summary
+        self.traceback = traceback
 
     def __str__(self):
-        return f"Command Error: {self.msg}"
+        return f"Command Error: {self.summary}"
 
 
 class CommandCanceled(Exception):

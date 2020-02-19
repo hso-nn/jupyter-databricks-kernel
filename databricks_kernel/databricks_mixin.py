@@ -138,7 +138,7 @@ class DatabricksMixin(object):
             ) as r:
                 r.raise_for_status()
 
-    async def _config_changed(self, data=None):
+    async def _config_changed(self, data=None, *args):
         if data:
             data = data["data"]
 
@@ -164,7 +164,7 @@ class DatabricksMixin(object):
             "clusters": clusters,
         }
 
-    async def _handle_actions(self, content):
+    async def _handle_actions(self, content, *args):
         action = content["data"]["action"]
         data = content["data"]["data"]
         if action == "start_cluster":
@@ -180,13 +180,15 @@ class DatabricksMixin(object):
 
         await self._build_session()
 
-        self.comms = {
-            x.uuid: x
-            for x in [
-                Comm("databricks.config", self._config_changed),
-                Comm("databricks.actions", self._handle_actions),
-            ]
-        }
+        self.comms.update(
+            **{
+                x.uuid: x
+                for x in [
+                    Comm("databricks.config", self._config_changed),
+                    Comm("databricks.actions", self._handle_actions),
+                ]
+            }
+        )
 
         # periodically send new config update
         while True:
@@ -195,8 +197,34 @@ class DatabricksMixin(object):
 
     async def _run_command(self, code):
 
-        if not await self._is_online_cluster():
-            raise ClusterNotOnlineException()
+        # if not await self._is_online_cluster():
+        #     raise ClusterNotOnlineException()
+
+        raise CommandError(
+            "blablbl",
+            """org.apache.spark.sql.AnalysisException: Cannot resolve column name "warehouse" among (date, SKU, qty);
+	at org.apache.spark.sql.Dataset$$anonfun$resolve$1.apply(Dataset.scala:235)
+	at org.apache.spark.sql.Dataset$$anonfun$resolve$1.apply(Dataset.scala:235)
+	at scala.Option.getOrElse(Option.scala:121)
+	at org.apache.spark.sql.Dataset.resolve(Dataset.scala:234)
+	at org.apache.spark.sql.Dataset$$anonfun$groupBy$2.apply(Dataset.scala:1650)
+	at org.apache.spark.sql.Dataset$$anonfun$groupBy$2.apply(Dataset.scala:1650)
+	at scala.collection.TraversableLike$$anonfun$map$1.apply(TraversableLike.scala:234)
+	at scala.collection.TraversableLike$$anonfun$map$1.apply(TraversableLike.scala:234)
+	at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:48)
+	at scala.collection.TraversableLike$class.map(TraversableLike.scala:234)
+	at scala.collection.AbstractTraversable.map(Traversable.scala:104)
+	at org.apache.spark.sql.Dataset.groupBy(Dataset.scala:1650)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:10)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:75)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:77)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:79)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:81)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:83)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:85)
+	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:87)""",
+        )
 
         context_id = await self._get_or_create_context_id()
 
@@ -235,6 +263,8 @@ class DatabricksMixin(object):
         stop_on_error=True,
     ):
         response = await self._run_command(code)
+        logger.warn(response)
+        logger.warn(user_expressions)
 
         if "results" not in response:
             raise IncompleteResults()
@@ -247,7 +277,9 @@ class DatabricksMixin(object):
         result_type = results["resultType"]
 
         if result_type == "error":
-            raise CommandError(results["cause"])
+            summary = results["summary"]
+            cause = results["cause"]
+            raise CommandError(summary, cause)
         elif result_type == "table":
             raise NotImplementedError(
                 "Displaying tables is not supported, please use the .show() function "
