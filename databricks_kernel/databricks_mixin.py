@@ -17,6 +17,7 @@ from .exceptions import (
     NoSuchMagic,
 )
 from .utils import Config
+from . import html
 
 logger = logging.getLogger("asyncio")
 logger.setLevel(logging.DEBUG)
@@ -110,7 +111,7 @@ class DatabricksMixin(object):
         return state in ["running", "resizing"]
 
     async def _destroy_context(self):
-        if self._cluster_id and self._context_id:
+        if self.config.cluster_id and self._context_id:
             async with self.session.post(
                 f"{self.config.uri}/api/1.2/contexts/destroy",
                 json={
@@ -197,34 +198,8 @@ class DatabricksMixin(object):
 
     async def _run_command(self, code):
 
-        # if not await self._is_online_cluster():
-        #     raise ClusterNotOnlineException()
-
-        raise CommandError(
-            "blablbl",
-            """org.apache.spark.sql.AnalysisException: Cannot resolve column name "warehouse" among (date, SKU, qty);
-	at org.apache.spark.sql.Dataset$$anonfun$resolve$1.apply(Dataset.scala:235)
-	at org.apache.spark.sql.Dataset$$anonfun$resolve$1.apply(Dataset.scala:235)
-	at scala.Option.getOrElse(Option.scala:121)
-	at org.apache.spark.sql.Dataset.resolve(Dataset.scala:234)
-	at org.apache.spark.sql.Dataset$$anonfun$groupBy$2.apply(Dataset.scala:1650)
-	at org.apache.spark.sql.Dataset$$anonfun$groupBy$2.apply(Dataset.scala:1650)
-	at scala.collection.TraversableLike$$anonfun$map$1.apply(TraversableLike.scala:234)
-	at scala.collection.TraversableLike$$anonfun$map$1.apply(TraversableLike.scala:234)
-	at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
-	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:48)
-	at scala.collection.TraversableLike$class.map(TraversableLike.scala:234)
-	at scala.collection.AbstractTraversable.map(Traversable.scala:104)
-	at org.apache.spark.sql.Dataset.groupBy(Dataset.scala:1650)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:10)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:75)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:77)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:79)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:81)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:83)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:85)
-	at line6404bacedca6450282a0fa322055663c43.$read$$iw$$iw$$iw$$iw$$iw.<init>(command-3187177836498446:87)""",
-        )
+        if not await self._is_online_cluster():
+            raise ClusterNotOnlineException()
 
         context_id = await self._get_or_create_context_id()
 
@@ -263,8 +238,7 @@ class DatabricksMixin(object):
         stop_on_error=True,
     ):
         response = await self._run_command(code)
-        logger.warn(response)
-        logger.warn(user_expressions)
+        logger.warn(str(response)[:200])
 
         if "results" not in response:
             raise IncompleteResults()
@@ -281,12 +255,13 @@ class DatabricksMixin(object):
             cause = results["cause"]
             raise CommandError(summary, cause)
         elif result_type == "table":
-            raise NotImplementedError(
-                "Displaying tables is not supported, please use the .show() function "
-                "instead."
-            )
+            return {
+                "html": html.table(
+                    results["data"], [x["name"] for x in results["schema"]]
+                )
+            }
         elif result_type == "text":
-            return results["data"]
+            return {"text": results["data"]}
         else:
             raise NotImplementedError(f"Not sure how to handle {result_type}.")
 

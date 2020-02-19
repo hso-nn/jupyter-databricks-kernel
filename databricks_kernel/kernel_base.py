@@ -8,10 +8,10 @@ import re
 import traceback
 import uuid
 
-import ipywidgets.widgets as widgets
 import zmq
 from zmq.asyncio import Context
 
+from . import html
 from .comm import Comm
 from .exceptions import CommandCanceled, CommandError
 
@@ -72,10 +72,6 @@ class KernelBase(object):
             "interrupt_request": self.handle_interrupt_request,
             "shutdown_request": self.do_shutdown,
         }
-
-        widgets_comm = Comm("jupyter.widget", self.handle_widgets)
-
-        self.comms = {widgets_comm.uuid: widgets_comm}
 
         self.execution_count = 0
 
@@ -259,30 +255,24 @@ class KernelBase(object):
         self.send(self.shell, "kernel_info_reply", response, headers, ids)
         self.publish_status("idle", headers)
 
-    async def handle_widgets(self, data, headers, ids):
-        logger.warn("widget!")
-        logger.warn(data)
+    def display_data(self, msg, headers, ids):
+        self.send(
+            self.iopub,
+            "display_data",
+            {"data": {"text/html": msg}, "metadata": {},},
+            headers,
+            ids,
+        )
 
-    async def send_widget(self, widget, headers, ids):
+    def print_stdout(self, msg, headers, ids):
+        self.send(
+            self.iopub, "stream", {"name": "stdout", "text": msg}, headers, ids,
+        )
 
-        manager_state = widget.get_manager_state()
-        view_spec = widget.get_view_spec()
-
-        for comm_id, state in manager_state["state"].items():
-            self.send(
-                self.iopub,
-                "comm_open",
-                {
-                    "comm_id": comm_id,
-                    "target_name": "jupyter.widget",
-                    "data": {"state": state["state"]},
-                },
-                headers,
-                ids,
-                metadata={"version": "2.0.0"},
-            )
-
-        return view_spec
+    def print_stderr(self, msg, headers, ids):
+        self.send(
+            self.iopub, "stream", {"name": "stderr", "text": msg}, headers, ids,
+        )
 
     async def handle_execute_request(self, content, headers, ids):
         self.execution_count += 1
@@ -292,52 +282,22 @@ class KernelBase(object):
             msg = await self.execute_code(**content)
             status = "ok"
 
-            self.send(
-                self.iopub,
-                "stream",
-                {"name": "stdout", "text": str(msg)},
-                headers,
-                ids,
-            )
+            if "text" in msg:
+                self.print_stdout(str(msg.get("text")), headers, ids)
+            if "html" in msg:
+                self.display_data(msg.get("html"), headers, ids)
+
         except CommandCanceled:
             status = "aborted"
-        except CommandError as e:
-            if e.summary:
-                self.send(
-                    self.iopub,
-                    "stream",
-                    {"name": "stderr", "text": str(e.summary)},
-                    headers,
-                    ids,
-                )
-            match_with_stacktrace = re.match(
-                r"(.+?Exception: .+?;)(.+)", e.traceback, re.DOTALL
-            )
-            if match_with_stacktrace:
-                title, stacktrace = match_with_stacktrace.groups()
-            else:
-                title = "More ..."
-                stacktrace = e.traceback
-            html = widgets.HTML(value=f"<pre>{stacktrace}</pre>")
-            accordion = widgets.Accordion(children=[html])
-            accordion.add_class("jp-RenderedText")
-            accordion.set_title(0, title)
-            view_spec = await self.send_widget(accordion, headers, ids)
+            self.print_stderr("Command canceled.", headers, ids)
 
-            self.send(
-                self.iopub,
-                "display_data",
-                {
-                    "data": {
-                        "text/plain": str(accordion),
-                        "application/vnd.jupyter.widget-view+json": view_spec,
-                    },
-                    "metadata": {},
-                },
-                headers,
-                ids,
-            )
+        except CommandError as e:
+            if e.summary and e.cause:
+                self.display_data(html.stacktrace(e.summary, e.cause), headers, ids)
+            else:
+                self.print_stderr(e.traceback, headers, ids)
             status = "error"
+
         except Exception as e:
             msg = str(e)
             if getattr(e, "skip_traceback", False):
@@ -345,13 +305,7 @@ class KernelBase(object):
 
             status = "error"
 
-            self.send(
-                self.iopub,
-                "stream",
-                {"name": "stderr", "text": str(msg)},
-                headers,
-                ids,
-            )
+            self.print_stderr(msg, headers, ids)
 
         self.send(
             self.shell,
