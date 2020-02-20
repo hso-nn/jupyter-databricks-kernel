@@ -17,6 +17,9 @@ async def run(kernel, filename, *args):
     results = []
     for cell in data["cells"]:
         code = "\n".join(cell["source"])
-        results.append(await kernel.execute_code(code))
+        response = await kernel.execute_code(code)
+        # only text responses are supported
+        if response:
+            results.append(response.get("text"))
 
     return "\n".join(results)

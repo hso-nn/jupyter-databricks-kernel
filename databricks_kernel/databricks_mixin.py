@@ -271,7 +271,17 @@ class DatabricksMixin(object):
 
         return await getattr(magics, cmd)(self, params)
 
-    async def execute_code(self, code, *args, **kwargs):
+    async def execute_code(
+        self,
+        code,
+        silent=False,
+        store_history=False,
+        user_expressions={},
+        allow_stdin=False,
+        stop_on_error=True,
+    ):
+        logger.warn(stop_on_error)
+
         match_magic = re.match(r"^%(\w+)\s(.+?)$", code)
         if match_magic:
             print
@@ -279,7 +289,14 @@ class DatabricksMixin(object):
             params = re.findall(r"[\"'](.+?)[\"']", params)
             return await self._execute_magic(cmd, *params)
         else:
-            return await self._execute_code(code, *args, **kwargs)
+            return await self._execute_code(
+                code,
+                silent=False,
+                store_history=False,
+                user_expressions={},
+                allow_stdin=False,
+                stop_on_error=True,
+            )
 
     async def do_shutdown(self, *args):
         print(args)

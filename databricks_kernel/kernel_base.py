@@ -295,7 +295,7 @@ class KernelBase(object):
             if e.summary and e.cause:
                 self.display_data(html.stacktrace(e.summary, e.cause), headers, ids)
             else:
-                self.print_stderr(e.traceback, headers, ids)
+                self.print_stderr(e.cause, headers, ids)
             status = "error"
 
         except Exception as e:
