@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import logging
-import re
 import traceback
 import uuid
 
@@ -12,7 +11,6 @@ import zmq
 from zmq.asyncio import Context
 
 from . import html
-from .comm import Comm
 from .exceptions import CommandCanceled, CommandError
 
 DELIM = b"<IDS|MSG>"
@@ -259,7 +257,7 @@ class KernelBase(object):
         self.send(
             self.iopub,
             "display_data",
-            {"data": {"text/html": msg}, "metadata": {},},
+            {"data": {"text/html": msg}, "metadata": {}},
             headers,
             ids,
         )

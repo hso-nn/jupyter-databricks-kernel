@@ -13,12 +13,12 @@ setup(
     author_email='mbaas@hso.com',
     url='https://github.com/hso-nn/databricks_kernel',
     install_requires=[
-        'jupyter_client', 'IPython', 'ipykernel'
+        'aiohttp==3.6.2', 'pyzmq==18.0.2'
     ],
     classifiers=[
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
-        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.7',
     ],
     include_package_data=True
 )
