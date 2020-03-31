@@ -14,12 +14,8 @@ async def run(kernel, filename, *args):
     with filename.open() as f:
         data = json.load(f)
 
-    results = []
     for cell in data["cells"]:
         code = "\n".join(cell["source"])
         response = await kernel.execute_code(code)
-        # only text responses are supported
-        if response:
-            results.append(response.get("text"))
 
-    return "\n".join(results)
+    return response

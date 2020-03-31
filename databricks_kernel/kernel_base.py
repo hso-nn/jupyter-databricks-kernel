@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 import traceback
 import uuid
 
@@ -46,6 +47,7 @@ class KernelBase(object):
     language_info = None
     comms = {}
     widgets = {}
+    error_timestamp = None
 
     def __init__(self, config):
         self.jupyter_config = config
@@ -276,17 +278,26 @@ class KernelBase(object):
         self.execution_count += 1
         self.interrupt_execution = False
 
+        queue_time = datetime.datetime.strptime(
+            headers["date"], "%Y-%m-%dT%H:%M:%S.%f%z"
+        ).timestamp()
+        if self.error_timestamp and queue_time < self.error_timestamp:
+            self.send(
+                self.shell, "execute_reply", {"status": "abort"}, headers, ids,
+            )
+            return
+
         try:
             msg = await self.execute_code(**content)
             status = "ok"
-
+            print(msg)
             if "text" in msg:
                 self.print_stdout(str(msg.get("text")), headers, ids)
             if "html" in msg:
                 self.display_data(msg.get("html"), headers, ids)
 
         except CommandCanceled:
-            status = "aborted"
+            status = "abort"
             self.print_stderr("Command canceled.", headers, ids)
 
         except CommandError as e:
@@ -298,8 +309,8 @@ class KernelBase(object):
 
         except Exception as e:
             msg = str(e)
-            if getattr(e, "skip_traceback", False):
-                msg = msg + "\n" + "".join(traceback.format_tb(e.__traceback__))
+            #if getattr(e, "skip_traceback", False):
+            msg = msg + "\n" + "".join(traceback.format_tb(e.__traceback__))
 
             status = "error"
 
@@ -312,6 +323,9 @@ class KernelBase(object):
             headers,
             ids,
         )
+
+        if status == "error" or status == "abort":
+            self.error_timestamp = time.time()
 
     async def handle_interrupt_request(self, content, headers, ids):
         self.interrupt_execution = True

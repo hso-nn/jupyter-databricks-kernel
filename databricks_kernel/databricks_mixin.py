@@ -280,11 +280,8 @@ class DatabricksMixin(object):
         allow_stdin=False,
         stop_on_error=True,
     ):
-        logger.warn(stop_on_error)
-
         match_magic = re.match(r"^%(\w+)\s(.+?)$", code)
         if match_magic:
-            print
             cmd, params = match_magic.groups()
             params = re.findall(r"[\"'](.+?)[\"']", params)
             return await self._execute_magic(cmd, *params)
